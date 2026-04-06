@@ -5,6 +5,7 @@ import math
 import random
 import sys
 import os
+import glob
 
 import neat
 import pygame
@@ -22,6 +23,122 @@ CAR_SIZE_Y = 60
 BORDER_COLOR = (255, 255, 255, 255) # Color To Crash on Hit
 
 current_generation = 0 # Generation counter
+simulation_fps = 60
+fullscreen_enabled = False
+selected_map = "map.png"
+screen = None
+map_preview_cache = {}
+
+
+class StopSimulation(Exception):
+    pass
+
+
+def apply_display_mode():
+    global screen
+    flags = pygame.FULLSCREEN if fullscreen_enabled else 0
+    screen = pygame.display.set_mode((WIDTH, HEIGHT), flags)
+    pygame.display.set_caption("AI Car Simulation")
+
+
+def get_available_maps():
+    maps = sorted(glob.glob("map*.png"))
+    if not maps and os.path.exists("map.png"):
+        maps = ["map.png"]
+    return maps
+
+
+def draw_text(surface, text, font, color, center):
+    rendered = font.render(text, True, color)
+    rect = rendered.get_rect(center=center)
+    surface.blit(rendered, rect)
+
+
+def get_map_preview(map_path, preview_size):
+    cache_key = (map_path, preview_size)
+    if cache_key not in map_preview_cache:
+        preview = pygame.image.load(map_path).convert()
+        preview = pygame.transform.smoothscale(preview, preview_size)
+        map_preview_cache[cache_key] = preview
+    return map_preview_cache[cache_key]
+
+
+def show_menu():
+    global fullscreen_enabled, selected_map, simulation_fps
+
+    pygame.init()
+    apply_display_mode()
+
+    title_font = pygame.font.SysFont("Arial", 52)
+    option_font = pygame.font.SysFont("Arial", 30)
+    hint_font = pygame.font.SysFont("Arial", 22)
+
+    maps = get_available_maps()
+    if not maps:
+        raise FileNotFoundError("No map files found. Add at least one file like map.png.")
+
+    if selected_map not in maps:
+        selected_map = maps[0]
+
+    map_index = maps.index(selected_map)
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit(0)
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP:
+                    map_index = (map_index - 1) % len(maps)
+                    selected_map = maps[map_index]
+                elif event.key == pygame.K_DOWN:
+                    map_index = (map_index + 1) % len(maps)
+                    selected_map = maps[map_index]
+                elif event.key == pygame.K_LEFT:
+                    simulation_fps = max(10, simulation_fps - 10)
+                elif event.key == pygame.K_RIGHT:
+                    simulation_fps = min(240, simulation_fps + 10)
+                elif event.key == pygame.K_f:
+                    fullscreen_enabled = not fullscreen_enabled
+                    apply_display_mode()
+                elif event.key == pygame.K_RETURN:
+                    return
+                elif event.key == pygame.K_ESCAPE:
+                    pygame.quit()
+                    sys.exit(0)
+
+        screen.fill((20, 22, 30))
+        draw_text(screen, "AI Car Simulation", title_font, (80, 190, 230), (WIDTH // 2, 90))
+        draw_text(screen, "Choose a map, preview it, then press ENTER to start", option_font, (240, 240, 240), (WIDTH // 2, 150))
+
+        preview_rect = pygame.Rect(120, 220, 980, 550)
+        info_rect = pygame.Rect(1170, 220, 620, 550)
+        pygame.draw.rect(screen, (35, 38, 48), preview_rect, border_radius=12)
+        pygame.draw.rect(screen, (35, 38, 48), info_rect, border_radius=12)
+        pygame.draw.rect(screen, (80, 190, 230), preview_rect, 3, border_radius=12)
+        pygame.draw.rect(screen, (80, 190, 230), info_rect, 3, border_radius=12)
+
+        preview = get_map_preview(selected_map, (preview_rect.width - 30, preview_rect.height - 70))
+        preview_pos = preview.get_rect(center=(preview_rect.centerx, preview_rect.centery + 20))
+        screen.blit(preview, preview_pos)
+        draw_text(screen, "Map Preview", option_font, (255, 255, 255), (preview_rect.centerx, preview_rect.top + 28))
+
+        draw_text(screen, f"Selected Map: {selected_map}", option_font, (255, 220, 80), (info_rect.centerx, info_rect.top + 45))
+        draw_text(screen, f"Simulation Speed: {simulation_fps} FPS", option_font, (255, 220, 80), (info_rect.centerx, info_rect.top + 95))
+        draw_text(screen, f"Display: {'Fullscreen' if fullscreen_enabled else 'Windowed'}", option_font, (255, 220, 80), (info_rect.centerx, info_rect.top + 145))
+
+        list_start_y = info_rect.top + 220
+        for idx, map_name in enumerate(maps):
+            color = (255, 220, 80) if idx == map_index else (210, 210, 220)
+            prefix = "> " if idx == map_index else "  "
+            draw_text(screen, prefix + map_name, option_font, color, (info_rect.centerx, list_start_y + idx * 42))
+
+        draw_text(screen, "UP/DOWN: Change map", hint_font, (200, 200, 210), (info_rect.centerx, info_rect.bottom - 140))
+        draw_text(screen, "LEFT/RIGHT: Change FPS", hint_font, (200, 200, 210), (info_rect.centerx, info_rect.bottom - 100))
+        draw_text(screen, "F: Toggle fullscreen/windowed", hint_font, (200, 200, 210), (info_rect.centerx, info_rect.bottom - 60))
+        draw_text(screen, "ENTER: Start  |  ESC: Quit", hint_font, (200, 200, 210), (info_rect.centerx, info_rect.bottom - 20))
+
+        pygame.display.flip()
 
 class Car:
 
@@ -160,10 +277,6 @@ def run_simulation(genomes, config):
     nets = []
     cars = []
 
-    # Initialize PyGame And The Display
-    pygame.init()
-    screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
-
     # For All Genomes Passed Create A New Neural Network
     for i, g in genomes:
         net = neat.nn.FeedForwardNetwork.create(g, config)
@@ -177,19 +290,69 @@ def run_simulation(genomes, config):
     clock = pygame.time.Clock()
     generation_font = pygame.font.SysFont("Arial", 30)
     alive_font = pygame.font.SysFont("Arial", 20)
-    game_map = pygame.image.load('map.png').convert() # Convert Speeds Up A Lot
+    info_font = pygame.font.SysFont("Arial", 18)
+    paused_font = pygame.font.SysFont("Arial", 48)
+    game_map = pygame.image.load(selected_map).convert() # Convert Speeds Up A Lot
 
     global current_generation
     current_generation += 1
 
     # Simple Counter To Roughly Limit Time (Not Good Practice)
     counter = 0
+    paused = False
 
     while True:
         # Exit On Quit Event
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 sys.exit(0)
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    paused = not paused
+                elif event.key == pygame.K_ESCAPE:
+                    raise StopSimulation()
+                elif event.key == pygame.K_f:
+                    global fullscreen_enabled
+                    fullscreen_enabled = not fullscreen_enabled
+                    apply_display_mode()
+                elif event.key == pygame.K_LEFT:
+                    global simulation_fps
+                    simulation_fps = max(10, simulation_fps - 10)
+                elif event.key == pygame.K_RIGHT:
+                    simulation_fps = min(240, simulation_fps + 10)
+
+        if paused:
+            screen.blit(game_map, (0, 0))
+            for car in cars:
+                if car.is_alive():
+                    car.draw(screen)
+
+            text = generation_font.render("Generation: " + str(current_generation), True, (0,0,0))
+            text_rect = text.get_rect()
+            text_rect.center = (900, 450)
+            screen.blit(text, text_rect)
+
+            text = alive_font.render("Still Alive: " + str(sum(1 for car in cars if car.is_alive())), True, (0, 0, 0))
+            text_rect = text.get_rect()
+            text_rect.center = (900, 490)
+            screen.blit(text, text_rect)
+
+            text = alive_font.render("Speed: " + str(simulation_fps) + " FPS", True, (0, 0, 0))
+            text_rect = text.get_rect()
+            text_rect.center = (900, 530)
+            screen.blit(text, text_rect)
+
+            pause_surface = paused_font.render("PAUSED", True, (200, 0, 0))
+            pause_rect = pause_surface.get_rect(center=(WIDTH // 2, 160))
+            screen.blit(pause_surface, pause_rect)
+
+            hint_surface = info_font.render("SPACE: Pause/Resume  LEFT/RIGHT: Speed  F: Fullscreen  ESC: Stop to Menu", True, (0, 0, 0))
+            hint_rect = hint_surface.get_rect(center=(WIDTH // 2, HEIGHT - 40))
+            screen.blit(hint_surface, hint_rect)
+
+            pygame.display.flip()
+            clock.tick(30)
+            continue
 
         # For Each Car Get The Acton It Takes
         for i, car in enumerate(cars):
@@ -238,24 +401,40 @@ def run_simulation(genomes, config):
         text_rect.center = (900, 490)
         screen.blit(text, text_rect)
 
+        text = alive_font.render("Speed: " + str(simulation_fps) + " FPS", True, (0, 0, 0))
+        text_rect = text.get_rect()
+        text_rect.center = (900, 530)
+        screen.blit(text, text_rect)
+
+        hint_surface = info_font.render("SPACE: Pause/Resume  LEFT/RIGHT: Speed  F: Fullscreen  ESC: Stop to Menu", True, (0, 0, 0))
+        hint_rect = hint_surface.get_rect(center=(WIDTH // 2, HEIGHT - 40))
+        screen.blit(hint_surface, hint_rect)
+
         pygame.display.flip()
-        clock.tick(60) # 60 FPS
+        clock.tick(simulation_fps)
 
 if __name__ == "__main__":
-    
-    # Load Config
-    config_path = "./config.txt"
-    config = neat.config.Config(neat.DefaultGenome,
-                                neat.DefaultReproduction,
-                                neat.DefaultSpeciesSet,
-                                neat.DefaultStagnation,
-                                config_path)
+    while True:
+        show_menu()
+        
+        # Load Config
+        config_path = "./config.txt"
+        config = neat.config.Config(neat.DefaultGenome,
+                                    neat.DefaultReproduction,
+                                    neat.DefaultSpeciesSet,
+                                    neat.DefaultStagnation,
+                                    config_path)
 
-    # Create Population And Add Reporters
-    population = neat.Population(config)
-    population.add_reporter(neat.StdOutReporter(True))
-    stats = neat.StatisticsReporter()
-    population.add_reporter(stats)
-    
-    # Run Simulation For A Maximum of 1000 Generations
-    population.run(run_simulation, 1000)
+        # Create Population And Add Reporters
+        population = neat.Population(config)
+        population.add_reporter(neat.StdOutReporter(True))
+        stats = neat.StatisticsReporter()
+        population.add_reporter(stats)
+        current_generation = 0
+        
+        # Run Simulation For A Maximum of 1000 Generations
+        try:
+            population.run(run_simulation, 1000)
+            break
+        except StopSimulation:
+            continue
