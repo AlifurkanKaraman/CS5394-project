@@ -58,7 +58,9 @@ import unittest.mock
 @given(sampled_from(["neat", "pygame"]))
 def test_main_raises_import_error_for_missing_dependency(pkg_name):
     # Property 3 — Validates: Requirements 11.4
-    from ai_car_sim.main import main
+    # check_dependencies() raises ImportError; main() catches it and returns 1.
+    # We test check_dependencies directly so the contract is clear.
+    from ai_car_sim.main import check_dependencies
 
     all_deps = ["neat", "pygame"]
     other_deps = [d for d in all_deps if d != pkg_name]
@@ -68,19 +70,15 @@ def test_main_raises_import_error_for_missing_dependency(pkg_name):
     def mock_import(name, *args, **kwargs):
         if name == pkg_name:
             raise ImportError(f"No module named '{pkg_name}'")
-        # Allow other required deps to succeed as stub modules so main()
-        # reaches the import we actually want to test.
         if name in other_deps:
             return types.ModuleType(name)
         return original_import(name, *args, **kwargs)
 
-    # Remove all dep modules from sys.modules so imports inside main() are
-    # attempted fresh (bypassing the module cache).
     saved = {d: sys.modules.pop(d, None) for d in all_deps}
     try:
         with unittest.mock.patch("builtins.__import__", side_effect=mock_import):
             with pytest.raises(ImportError) as exc_info:
-                main()
+                check_dependencies()
         assert pkg_name in str(exc_info.value), (
             f"ImportError message should contain '{pkg_name}', got: {exc_info.value}"
         )
