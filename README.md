@@ -31,12 +31,25 @@ ai-car-sim
 
 ## Testing
 
+The project ships with a comprehensive pytest suite covering all layers.
+All tests are headless — no pygame display is required.
+
 ```bash
-# Run all tests
+# Install dev dependencies (once)
+pip install -e ".[dev]"
+
+# Run the full suite
 pytest
 
-# With coverage
-pytest --cov=ai_car_sim
+# Run with coverage report
+pytest --cov=ai_car_sim --cov-report=term-missing
+
+# Run a specific focused module
+pytest tests/test_vector_utils.py -v
+pytest tests/test_vehicle_state.py -v
+pytest tests/test_track.py -v
+pytest tests/test_neat_driver.py -v
+pytest tests/test_persistence.py -v
 
 # Run linter
 ruff check src/
@@ -44,6 +57,24 @@ ruff check src/
 # Run type checker
 mypy src/
 ```
+
+### Test organisation
+
+| File | What it covers |
+|---|---|
+| `test_track.py` | Track domain model — construction, validation, path resolution, serialisation |
+| `test_vehicle_state.py` | VehicleState — state transitions, crash/advance helpers, round-trip serialisation |
+| `test_vector_utils.py` | Pure math helpers — distance, rotate_point, clamp, heading_to_vector, angle normalisation |
+| `test_neat_driver.py` | NeatDriver — argmax action mapping, input forwarding, output validation |
+| `test_persistence.py` | save/load helpers — genome pickle, JSON, CSV, integration with RunMetricsCollector |
+| `test_domain_*.py` | Additional domain model coverage |
+| `test_core_*.py` | Collision service, radar sensor, car entity |
+| `test_ai_*.py` | Driver interface, training manager, replay loader |
+| `test_simulation_engine.py` | Headless engine step/lifecycle orchestration |
+| `test_analytics_run_metrics.py` | Metrics collection and aggregation |
+| `test_ui_*.py` | HUD layout helpers and menu navigation state |
+| `test_main_bootstrap.py` | CLI argument parsing and bootstrap helpers |
+| `test_properties.py` | Hypothesis property tests across modules |
 
 ## Project Goals
 
