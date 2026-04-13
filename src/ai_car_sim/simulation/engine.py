@@ -22,6 +22,7 @@ from ai_car_sim.core.car import Car
 from ai_car_sim.ai.driver_interface import Action, DriverInterface
 from ai_car_sim.ai.neat_driver import NeatDriver
 from ai_car_sim.ui.hud_view import HudView, HudMetrics, SimMode
+from ai_car_sim.ui.photo_mode import PhotoMode
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ class SimulationEngine:
         self._game_map: Any = None
         self._car_sprite: Any = None
         self._hud = HudView()
+        self._photo = PhotoMode()
         self._initialized = False
 
         # Runtime state reset each generation
@@ -198,15 +200,33 @@ class SimulationEngine:
         """Run the frame loop for one training generation.
 
         Exits when all cars have crashed or the step budget is exhausted.
+        Respects pause state from :class:`~ai_car_sim.ui.photo_mode.PhotoMode`.
         """
         step = 0
         budget = self.config.steps_per_generation
         start = time.monotonic()
+        last_time = start
 
         while step < budget:
+            now = time.monotonic()
+            dt = now - last_time
+            last_time = now
+
             if not self.headless:
-                if self._handle_quit_event():
+                quit_requested = self._handle_events()
+                if quit_requested:
                     break
+
+                if self._photo.paused:
+                    # Keep rendering while paused but don't advance physics
+                    alive = sum(1 for c in self._cars if c.is_alive())
+                    self._render_frame(
+                        mode=SimMode.TRAINING,
+                        alive_count=alive,
+                        elapsed=time.monotonic() - start,
+                        dt=dt,
+                    )
+                    continue
 
             alive = self._step_all()
             if alive == 0:
@@ -217,6 +237,7 @@ class SimulationEngine:
                     mode=SimMode.TRAINING,
                     alive_count=alive,
                     elapsed=time.monotonic() - start,
+                    dt=dt,
                 )
 
             step += 1
@@ -240,11 +261,27 @@ class SimulationEngine:
         step = 0
         budget = self.config.steps_per_generation
         start = time.monotonic()
+        last_time = start
 
         while step < budget:
+            now = time.monotonic()
+            dt = now - last_time
+            last_time = now
+
             if not self.headless:
-                if self._handle_quit_event():
+                quit_requested = self._handle_events()
+                if quit_requested:
                     break
+
+                if self._photo.paused:
+                    alive = sum(1 for c in self._cars if c.is_alive())
+                    self._render_frame(
+                        mode=SimMode.REPLAY,
+                        alive_count=alive,
+                        elapsed=time.monotonic() - start,
+                        dt=dt,
+                    )
+                    continue
 
             alive = self._step_all()
             if alive == 0:
@@ -255,6 +292,7 @@ class SimulationEngine:
                     mode=SimMode.REPLAY,
                     alive_count=alive,
                     elapsed=time.monotonic() - start,
+                    dt=dt,
                 )
 
             step += 1
@@ -306,8 +344,9 @@ class SimulationEngine:
         mode: SimMode,
         alive_count: int,
         elapsed: float = 0.0,
+        dt: float = 0.0,
     ) -> None:
-        """Draw map, cars, and HUD for one frame."""
+        """Draw map, cars, HUD, and photo-mode overlays for one frame."""
         import pygame
 
         self._screen.blit(self._game_map, (0, 0))
@@ -328,20 +367,49 @@ class SimulationEngine:
             mode=mode,
             elapsed_seconds=elapsed,
         )
-        self._hud.draw(self._screen, metrics)
+
+        # Only draw HUD when photo mode allows it
+        if self._photo.hud_visible:
+            self._hud.draw(self._screen, metrics)
+
+        # Photo-mode overlays always drawn on top
+        self._photo.draw_overlays(self._screen, dt)
 
         pygame.display.flip()
         self._clock.tick(self.config.fps)
 
-    def _handle_quit_event(self) -> bool:
-        """Process pygame events; return ``True`` if the user wants to quit."""
+    def _handle_events(self) -> bool:
+        """Process all pending pygame events.
+
+        Handles photo-mode keys (P, SPACE, H, C) and quit signals.
+
+        Returns:
+            ``True`` if the simulation should exit.
+        """
         import pygame
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                return True
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return True
+
+                # Screenshot: P key — photo_mode.handle_event returns True
+                # but we also need to call take_screenshot here
+                if event.key == pygame.K_p:
+                    self._photo.take_screenshot(self._screen)
+                    continue
+
+                # All other photo-mode keys (SPACE, H, C)
+                self._photo.handle_event(event)
+
         return False
+
+    def _handle_quit_event(self) -> bool:
+        """Legacy wrapper — delegates to :meth:`_handle_events`."""
+        return self._handle_events()
 
     def _load_map(self) -> Any:
         """Load and convert the track map image."""
@@ -379,3 +447,8 @@ class SimulationEngine:
     def generation(self) -> int:
         """Current generation counter."""
         return self._generation
+
+    @property
+    def photo_mode(self) -> PhotoMode:
+        """The attached :class:`~ai_car_sim.ui.photo_mode.PhotoMode` controller."""
+        return self._photo
