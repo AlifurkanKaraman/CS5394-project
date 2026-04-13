@@ -4,7 +4,7 @@ A NEAT-based neuroevolution self-driving car simulation using pygame.
 
 ## Architecture
 
-The project follows a layered architecture under `src/ai_car_sim/`:
+Layered package structure under `src/ai_car_sim/`:
 
 - `domain/` — pure data models (Track, VehicleState, SensorReading, SimulationConfig)
 - `core/` — physics, collision detection, and radar sensing
@@ -16,19 +16,33 @@ The project follows a layered architecture under `src/ai_car_sim/`:
 
 ## Running
 
-Install dependencies and run the simulation:
-
+**Original prototype (fully working):**
 ```bash
-pip install -e .
+python newcar.py
+```
+
+**Refactored package (once logic is ported):**
+```bash
+pip install -e ".[dev]"
 python -m ai_car_sim.main
+# or use the entry point:
+ai-car-sim
 ```
 
 ## Testing
 
-Run the test suite with pytest:
-
 ```bash
+# Run all tests
 pytest
+
+# With coverage
+pytest --cov=ai_car_sim
+
+# Run linter
+ruff check src/
+
+# Run type checker
+mypy src/
 ```
 
 ## Project Goals
