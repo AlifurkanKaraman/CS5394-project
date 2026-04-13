@@ -9,26 +9,17 @@ sensing, and collision logic is delegated to focused modules.
 from __future__ import annotations
 
 import math
-from enum import IntEnum
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from ai_car_sim.domain.vehicle_state import VehicleState
 from ai_car_sim.domain.simulation_config import SimulationConfig
 from ai_car_sim.core.radar_sensor import RadarSensorSystem, MapSurface
 from ai_car_sim.core.collision_service import compute_corners, is_collision
 from ai_car_sim.core.vector_utils import clamp
+from ai_car_sim.ai.driver_interface import Action
 
-
-# ---------------------------------------------------------------------------
-# Action enum
-# ---------------------------------------------------------------------------
-
-class Action(IntEnum):
-    """Discrete actions the AI driver (or replay) can apply each tick."""
-    TURN_LEFT  = 0
-    TURN_RIGHT = 1
-    SLOW_DOWN  = 2
-    SPEED_UP   = 3
+# Re-export so existing imports from this module keep working
+__all__ = ["Car", "Action"]
 
 
 # ---------------------------------------------------------------------------
