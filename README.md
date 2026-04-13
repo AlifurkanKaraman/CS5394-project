@@ -1,6 +1,11 @@
 # AI Car Simulation
 
-A NEAT-based neuroevolution self-driving car simulation using pygame.
+A NEAT-based neuroevolution self-driving car simulation using pygame,
+refactored from the [NeuralNine/ai-car-simulation](https://github.com/NeuralNine/ai-car-simulation)
+prototype into a clean, modular Python package.
+
+> Full architecture documentation, class diagram, and design decisions:
+> **[docs/architecture.md](docs/architecture.md)**
 
 ## Architecture
 
@@ -80,5 +85,6 @@ mypy src/
 
 - Refactor the monolithic `newcar.py` prototype into a clean, modular Python package
 - Separate concerns across domain, core, AI, UI, simulation, analytics, and persistence layers
-- Establish a test scaffold for incremental implementation and validation
+- Establish a comprehensive test suite (428 tests, all headless)
 - Enable independent development and testing of each layer
+- Support training, replay, and future manual-drive modes via a shared `DriverInterface`
