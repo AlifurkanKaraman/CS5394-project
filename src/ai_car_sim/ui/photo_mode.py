@@ -41,13 +41,31 @@ _GREEN  = ( 80, 220, 120)
 _GRAY   = (160, 160, 160)
 _RED    = (220,  60,  60)
 
-_CONTROLS: list[tuple[str, str]] = [
-    ("P",     "Screenshot"),
-    ("SPACE", "Pause"),
-    ("H",     "Hide HUD"),
-    ("C",     "Cinematic"),
-    ("ESC",   "Quit"),
+_CONTROLS_TRAINING: list[tuple[str, str]] = [
+    ("P",         "Screenshot"),
+    ("SPACE",     "Pause"),
+    ("H",         "Hide HUD"),
+    ("C",         "Cinematic"),
+    ("Q",         "Main Menu"),
+    ("ESC",       "Next Gen"),
+    ("+ / -",     "Speed Up/Down"),
+    ("0",         "Reset Speed"),
 ]
+
+_CONTROLS_MANUAL: list[tuple[str, str]] = [
+    ("LEFT",      "Steer Left"),
+    ("RIGHT",     "Steer Right"),
+    ("UP",        "Accelerate"),
+    ("DOWN",      "Brake"),
+    ("P",         "Screenshot"),
+    ("SPACE",     "Pause"),
+    ("H",         "Hide HUD"),
+    ("C",         "Cinematic"),
+    ("Q",         "Main Menu"),
+]
+
+# Default (training) controls kept for backward compat
+_CONTROLS = _CONTROLS_TRAINING
 
 
 class PhotoMode:
@@ -62,8 +80,13 @@ class PhotoMode:
             Created automatically on first screenshot.
     """
 
-    def __init__(self, screenshot_dir: str | Path = "outputs/screenshots") -> None:
+    def __init__(
+        self,
+        screenshot_dir: str | Path = "outputs/screenshots",
+        controls: list[tuple[str, str]] | None = None,
+    ) -> None:
         self._screenshot_dir = Path(screenshot_dir)
+        self._controls = controls if controls is not None else _CONTROLS_TRAINING
 
         self.paused: bool = False
         self.hud_visible: bool = True
@@ -207,7 +230,7 @@ class PhotoMode:
     def _draw_paused_banner(self, screen: Any, sw: int, sh: int) -> None:
         """Draw a centred PAUSED banner near the top of the screen."""
         import pygame
-        text_surf = self._font_large.render("⏸  PAUSED", True, _YELLOW)
+        text_surf = self._font_large.render("[ PAUSED ]", True, _YELLOW)
         rect = text_surf.get_rect(centerx=sw // 2, y=18)
 
         # Background pill
@@ -236,8 +259,8 @@ class PhotoMode:
         import pygame
         line_h = 20
         pad = 8
-        lines = [f"{key}  {label}" for key, label in _CONTROLS]
-        panel_w = 180
+        lines = [f"{key}  {label}" for key, label in self._controls]
+        panel_w = 220
         panel_h = len(lines) * line_h + pad * 2
 
         x = sw - panel_w - 10

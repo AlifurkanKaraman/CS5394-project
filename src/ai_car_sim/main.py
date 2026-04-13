@@ -129,13 +129,16 @@ def setup_output_dirs(config) -> None:
 # Workflow runners
 # ---------------------------------------------------------------------------
 
-def run_training(config, track, headless: bool = False) -> None:
+def run_training(config, track, headless: bool = False) -> bool:
     """Wire up and run a full NEAT training session.
 
     Args:
         config: Simulation configuration.
         track: Track to train on.
         headless: Skip pygame display when ``True``.
+
+    Returns:
+        ``True`` if the user pressed Q (return to menu), ``False`` otherwise.
     """
     from ai_car_sim.simulation.engine import SimulationEngine
     from ai_car_sim.ai.training_manager import TrainingManager
@@ -151,36 +154,69 @@ def run_training(config, track, headless: bool = False) -> None:
 
     def on_generation(gen: int, best_fitness: float) -> None:
         logger.info("Generation %d — best fitness: %.4f", gen, best_fitness)
+        # Stop NEAT loop if user pressed Q
+        if engine.return_to_menu:
+            raise _ReturnToMenu()
 
     manager = TrainingManager(config, engine, on_generation=on_generation)
     manager.load_neat_config()
     manager.create_population()
 
+    returned_to_menu = False
     try:
         winner = manager.run_training()
+    except _ReturnToMenu:
+        logger.info("User returned to menu during training.")
+        returned_to_menu = True
+        winner = None
     finally:
         engine.shutdown()
 
-    # Persist artefacts
-    genome_path = Path(config.output_dir) / "genomes" / "best_genome.pkl"
-    save_best_genome(winner, genome_path)
+    if winner is not None:
+        genome_path = Path(config.output_dir) / "genomes" / "best_genome.pkl"
+        save_best_genome(winner, genome_path)
 
-    summary = collector.record_run_summary(
-        neat_config_path=config.neat_config_path,
-        genome_path=str(genome_path),
-    )
-    save_metrics_json(
-        summary.to_dict(),
-        Path(config.output_dir) / "metrics" / "run_summary.json",
-    )
-    save_metrics_csv(
-        collector.to_rows(),
-        Path(config.output_dir) / "metrics" / "generations.csv",
-    )
-    logger.info("Training complete. Best genome saved to %s", genome_path)
+        summary = collector.record_run_summary(
+            neat_config_path=config.neat_config_path,
+            genome_path=str(genome_path),
+        ) if collector.generation_count > 0 else None
+
+        if summary:
+            save_metrics_json(
+                summary.to_dict(),
+                Path(config.output_dir) / "metrics" / "run_summary.json",
+            )
+        save_metrics_csv(
+            collector.to_rows(),
+            Path(config.output_dir) / "metrics" / "generations.csv",
+        )
+        logger.info("Training complete. Best genome saved to %s", genome_path)
+
+    return returned_to_menu
 
 
-def run_replay(config, track, genome_path: str | None = None) -> None:
+class _ReturnToMenu(Exception):
+    """Internal signal: user pressed Q during training."""
+
+
+def run_manual(config, track) -> None:
+    """Launch manual / player-controlled mode.
+
+    Args:
+        config: Simulation configuration.
+        track: Track to drive on.
+    """
+    from ai_car_sim.simulation.engine import SimulationEngine
+
+    engine = SimulationEngine(config, track, headless=False)
+    engine.initialize()
+    try:
+        engine.run_manual()
+    finally:
+        engine.shutdown()
+
+
+def run_replay(config, track, genome_path: str | None = None) -> bool:
     """Load the best saved genome and replay it.
 
     Args:
@@ -188,6 +224,9 @@ def run_replay(config, track, genome_path: str | None = None) -> None:
         track: Track to replay on.
         genome_path: Path to the genome pickle.  Defaults to
             ``<output_dir>/genomes/best_genome.pkl``.
+
+    Returns:
+        ``True`` if the user pressed Q (return to menu).
     """
     from ai_car_sim.simulation.engine import SimulationEngine
     from ai_car_sim.ai.replay_loader import load_replay_driver
@@ -201,10 +240,15 @@ def run_replay(config, track, genome_path: str | None = None) -> None:
         engine.run_replay(driver)
     finally:
         engine.shutdown()
+    return engine.return_to_menu
 
 
 def run_menu(config, tracks: list) -> None:
     """Show the interactive menu and launch the selected workflow.
+
+    Loops: after training/replay returns (including via Q), the menu
+    is shown again.  The loop only exits when the user selects Quit
+    from the menu itself or closes the window.
 
     Args:
         config: Simulation configuration.
@@ -214,50 +258,66 @@ def run_menu(config, tracks: list) -> None:
     from ai_car_sim.ui.menu_controller import MenuController, MenuAction
     from ai_car_sim.ui.hud_view import SimMode
 
+    # One pygame init for the whole application lifetime
     pygame.init()
     flags = pygame.FULLSCREEN if config.fullscreen else 0
     screen = pygame.display.set_mode(
         (config.screen_width, config.screen_height), flags
     )
-    pygame.display.set_caption("AI Car Simulation — Menu")
+    pygame.display.set_caption("AI Car Simulation")
     clock = pygame.time.Clock()
 
     track_names = [t.name for t in tracks]
-    menu = MenuController(tracks=track_names)
 
-    running = True
-    while running:
-        for event in pygame.event.get():
-            action = menu.handle_event(event)
-            if action == MenuAction.QUIT:
-                running = False
-            elif action == MenuAction.CONFIRM:
-                running = False
+    while True:
+        # ---- Menu loop ----
+        menu = MenuController(tracks=track_names)
+        menu_running = True
+        while menu_running:
+            for event in pygame.event.get():
+                action = menu.handle_event(event)
+                if action in (MenuAction.QUIT, MenuAction.CONFIRM):
+                    menu_running = False
 
-        if not running:
+            if not menu_running:
+                break
+
+            menu.draw(screen)
+            pygame.display.flip()
+            clock.tick(30)
+
+        if menu.is_quit_requested():
+            logger.info("User quit from menu.")
             break
 
-        menu.draw(screen)
-        pygame.display.flip()
-        clock.tick(30)
+        # Map selected track name back to Track object
+        selected_name = menu.get_selected_track()
+        track = next((t for t in tracks if t.name == selected_name), tracks[0])
+        mode = menu.get_selected_mode()
+
+        # ---- Run selected mode (engine manages its own display) ----
+        # IMPORTANT: do NOT call pygame.quit() here — the engine reuses
+        # the existing pygame context via its own initialize().
+        pygame.quit()   # engine will re-init; this avoids display conflicts
+
+        if mode == SimMode.TRAINING:
+            run_training(config, track)
+        elif mode == SimMode.REPLAY:
+            run_replay(config, track)
+        elif mode == SimMode.MANUAL:
+            run_manual(config, track)
+        else:
+            logger.warning("Unknown mode: %s", mode)
+
+        # Re-init pygame for the menu after the engine shuts down
+        pygame.init()
+        screen = pygame.display.set_mode(
+            (config.screen_width, config.screen_height), flags
+        )
+        pygame.display.set_caption("AI Car Simulation")
+        clock = pygame.time.Clock()
 
     pygame.quit()
-
-    if menu.is_quit_requested():
-        logger.info("User quit from menu.")
-        return
-
-    # Map selected track name back to Track object
-    selected_name = menu.get_selected_track()
-    track = next((t for t in tracks if t.name == selected_name), tracks[0])
-    mode = menu.get_selected_mode()
-
-    if mode == SimMode.TRAINING:
-        run_training(config, track)
-    elif mode == SimMode.REPLAY:
-        run_replay(config, track)
-    else:
-        logger.info("Manual mode not yet implemented.")
 
 
 # ---------------------------------------------------------------------------

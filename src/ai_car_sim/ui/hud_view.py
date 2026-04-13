@@ -43,16 +43,19 @@ class HudMetrics:
         avg_fitness: Optional average fitness across the population.
         best_speed: Optional speed of the leading car.
         elapsed_seconds: Optional wall-clock seconds for this generation.
+        sim_speed: Current simulation speed multiplier (e.g. 1.0, 2.0).
     """
 
     generation: int = 0
     alive_count: int = 0
+    total_spawned: int = 0
     best_fitness: float = 0.0
     track_name: str = ""
     mode: SimMode = SimMode.TRAINING
     avg_fitness: float | None = None
     best_speed: float | None = None
     elapsed_seconds: float | None = None
+    sim_speed: float = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -140,9 +143,14 @@ class HudView:
         lines: list[tuple[str, Any]] = [
             (f"Mode:       {mode_label}",          _CYAN),
             (f"Generation: {metrics.generation}",  _WHITE),
-            (f"Alive:      {metrics.alive_count}", _WHITE),
+            (f"Cars:       {metrics.alive_count}/{metrics.total_spawned}", _WHITE),
             (f"Best fit:   {metrics.best_fitness:.2f}", _YELLOW),
         ]
+
+        if metrics.sim_speed != 1.0 or True:  # always show speed
+            speed_label = f"{metrics.sim_speed:.1f}x"
+            colour = _YELLOW if metrics.sim_speed != 1.0 else _GRAY
+            lines.append((f"Speed:      {speed_label}", colour))
 
         if metrics.avg_fitness is not None:
             lines.append((f"Avg fit:    {metrics.avg_fitness:.2f}", _GRAY))
@@ -151,7 +159,7 @@ class HudView:
             lines.append((f"Track:      {metrics.track_name}", _GRAY))
 
         if metrics.best_speed is not None:
-            lines.append((f"Speed:      {metrics.best_speed:.1f}", _GRAY))
+            lines.append((f"Car spd:    {metrics.best_speed:.1f}", _GRAY))
 
         if metrics.elapsed_seconds is not None:
             lines.append((f"Time:       {metrics.elapsed_seconds:.1f}s", _GRAY))
