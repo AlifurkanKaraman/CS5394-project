@@ -1,0 +1,9 @@
+.hypothesis/
+__pycache__/
+*.pyc
+.venv/
+outputs/*
+!outputs/.gitkeep
+*.egg-info/
+dist/
+build/
