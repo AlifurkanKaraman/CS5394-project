@@ -44,6 +44,7 @@ class HudMetrics:
         best_speed: Optional speed of the leading car.
         elapsed_seconds: Optional wall-clock seconds for this generation.
         sim_speed: Current simulation speed multiplier (e.g. 1.0, 2.0).
+        species_count: Optional number of NEAT species this generation.
     """
 
     generation: int = 0
@@ -56,6 +57,7 @@ class HudMetrics:
     best_speed: float | None = None
     elapsed_seconds: float | None = None
     sim_speed: float = 1.0
+    species_count: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -147,13 +149,16 @@ class HudView:
             (f"Best fit:   {metrics.best_fitness:.2f}", _YELLOW),
         ]
 
-        if metrics.sim_speed != 1.0 or True:  # always show speed
-            speed_label = f"{metrics.sim_speed:.1f}x"
-            colour = _YELLOW if metrics.sim_speed != 1.0 else _GRAY
-            lines.append((f"Speed:      {speed_label}", colour))
-
         if metrics.avg_fitness is not None:
             lines.append((f"Avg fit:    {metrics.avg_fitness:.2f}", _GRAY))
+
+        if metrics.species_count is not None:
+            lines.append((f"Species:    {metrics.species_count}", _GRAY))
+
+        # Always show speed
+        speed_label = f"{metrics.sim_speed:.1f}x"
+        colour = _YELLOW if metrics.sim_speed != 1.0 else _GRAY
+        lines.append((f"Speed:      {speed_label}", colour))
 
         if metrics.track_name:
             lines.append((f"Track:      {metrics.track_name}", _GRAY))

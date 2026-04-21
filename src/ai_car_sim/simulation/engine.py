@@ -94,6 +94,11 @@ class SimulationEngine:
         self._genomes: list[Any] = []
         self._generation: int = 0
 
+        # Cross-generation fitness tracking for HUD
+        self._last_best_fitness: float = 0.0
+        self._last_avg_fitness: float = 0.0
+        self._last_species_count: int | None = None
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -185,16 +190,18 @@ class SimulationEngine:
         logger.debug("Created %d cars for generation (spread=%.1fpx)", n, _SPAWN_SPREAD_PX)
         return self._cars
 
-    def create_replay_car(self, driver: DriverInterface) -> Car:
+    def create_replay_car(self, driver: DriverInterface, manual_mode: bool = False) -> Car:
         """Create a single car for replay or manual mode.
 
         Args:
             driver: The driver to control the car.
+            manual_mode: When ``True`` the car uses the slower manual-mode
+                speed profile.
 
         Returns:
             The created :class:`Car`.
         """
-        car = Car(self.config, sprite_surface=self._car_sprite)
+        car = Car(self.config, sprite_surface=self._car_sprite, manual_mode=manual_mode)
         car.reset(*self.track.spawn_position, self.track.spawn_angle)
         self._cars = [car]
         self._drivers = [driver]
@@ -238,16 +245,26 @@ class SimulationEngine:
 
         self.run_generation()
 
-        # Write accumulated fitness back to genomes
+        # Write accumulated fitness back to genomes — each genome gets the
+        # reward from its own corresponding car (index-aligned).
         for genome, car in zip(self._genomes, self._cars):
             genome.fitness = car.get_reward()
 
+        fitnesses = [g.fitness for g in self._genomes if g.fitness is not None]
+        best_fit = max(fitnesses) if fitnesses else 0.0
+        avg_fit = sum(fitnesses) / len(fitnesses) if fitnesses else 0.0
+
         logger.debug(
-            "Generation %d: fitness range [%.3f, %.3f]",
+            "Generation %d: fitness range [%.3f, %.3f], avg=%.3f",
             self._generation,
-            min(g.fitness for g in self._genomes),
-            max(g.fitness for g in self._genomes),
+            min(fitnesses) if fitnesses else 0.0,
+            best_fit,
+            avg_fit,
         )
+
+        # Store for HUD access
+        self._last_best_fitness = best_fit
+        self._last_avg_fitness = avg_fit
 
     # ------------------------------------------------------------------
     # Generation loop
@@ -400,8 +417,8 @@ class SimulationEngine:
         self._return_to_menu = False
 
         while not self._return_to_menu:
-            # Spawn / respawn
-            self.create_replay_car(driver)
+            # Spawn / respawn — use manual_mode=True for slower speed profile
+            self.create_replay_car(driver, manual_mode=True)
             self._generation += 1
             if not self.headless:
                 self._gen_overlay.show(self._generation)
@@ -582,19 +599,23 @@ class SimulationEngine:
             if car.is_alive():
                 car.draw(self._screen)
 
-        best_fitness = max(
-            (c.get_reward() for c in self._cars if c.is_alive()),
-            default=0.0,
+        alive_fitnesses = [c.get_reward() for c in self._cars if c.is_alive()]
+        best_fitness = max(alive_fitnesses, default=0.0)
+        avg_fitness = (
+            sum(alive_fitnesses) / len(alive_fitnesses) if alive_fitnesses else 0.0
         )
+
         metrics = HudMetrics(
             generation=self._generation,
             alive_count=alive_count,
             total_spawned=total_spawned,
             best_fitness=best_fitness,
+            avg_fitness=avg_fitness,
             track_name=self.track.name,
             mode=mode,
             elapsed_seconds=elapsed,
             sim_speed=_SPEED_STEPS[self._speed_idx],
+            species_count=self._last_species_count,
         )
 
         if self._photo.hud_visible:
@@ -733,3 +754,13 @@ class SimulationEngine:
         """Reset simulation speed to 1.0x and return the multiplier."""
         self._speed_idx = _DEFAULT_SPEED_IDX
         return self.sim_speed
+
+    def set_species_count(self, count: int) -> None:
+        """Update the species count shown in the HUD.
+
+        Called by the training manager after each generation.
+
+        Args:
+            count: Number of active NEAT species.
+        """
+        self._last_species_count = count

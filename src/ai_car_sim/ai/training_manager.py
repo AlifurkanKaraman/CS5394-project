@@ -204,7 +204,8 @@ class TrainingManager:
             genomes: List of ``(genome_id, genome)`` pairs.
             neat_config: Active NEAT configuration.
         """
-        # Reset fitness before evaluation
+        # Reset fitness before evaluation so stale values from a previous
+        # generation never bleed into the current one.
         for _, genome in genomes:
             genome.fitness = 0.0
 
@@ -212,8 +213,20 @@ class TrainingManager:
 
         self._generation += 1
 
+        # Push species count to the engine for HUD display (optional — only
+        # if the engine exposes set_species_count and the population is ready).
+        if self._population is not None and hasattr(self.engine, "set_species_count"):
+            try:
+                species_count = len(self._population.species.species)
+                self.engine.set_species_count(species_count)  # type: ignore[attr-defined]
+            except Exception:
+                pass  # non-critical; don't break training over HUD data
+
         if self.on_generation is not None:
-            best = max(g.fitness for _, g in genomes if g.fitness is not None)
+            best = max(
+                (g.fitness for _, g in genomes if g.fitness is not None),
+                default=0.0,
+            )
             self.on_generation(self._generation, best)
 
     # ------------------------------------------------------------------

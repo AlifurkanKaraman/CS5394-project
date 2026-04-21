@@ -61,10 +61,16 @@ class SimulationConfig:
     max_radar_distance: int = 300
     radar_angles: list[int] = field(default_factory=lambda: [-90, -45, 0, 45, 90])
 
-    # Physics
+    # Physics — training / AI mode
     default_speed: float = 20.0
     max_speed: float = 40.0
     min_speed: float = 12.0
+
+    # Physics — manual / player mode (slower, more controllable)
+    manual_default_speed: float = 8.0
+    manual_max_speed: float = 16.0
+    manual_min_speed: float = 4.0
+    manual_turn_step: float = 5.0   # degrees per tick (vs 10 for AI)
 
     # Simulation loop
     fps: int = 60

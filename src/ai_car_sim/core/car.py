@@ -48,25 +48,47 @@ class Car:
         sprite_surface: A pygame-like surface for the car sprite.  When
             ``None`` the car operates in headless / test mode and
             :meth:`draw` is a no-op.
+        manual_mode: When ``True`` the car uses the slower manual-mode
+            speed profile (``manual_default_speed``, ``manual_max_speed``,
+            ``manual_min_speed``, ``manual_turn_step``) instead of the
+            AI training profile.
     """
 
     def __init__(
         self,
         config: SimulationConfig,
         sprite_surface: object | None = None,
+        manual_mode: bool = False,
     ) -> None:
         self.config = config
+        self.manual_mode = manual_mode
 
         # Sprite (may be None in headless/test mode)
         self._sprite = sprite_surface
         self._rotated_sprite = sprite_surface
+
+        # Pick the correct speed profile up-front
+        self._default_speed = (
+            config.manual_default_speed if manual_mode else config.default_speed
+        )
+        self._max_speed = (
+            config.manual_max_speed if manual_mode else config.max_speed
+        )
+        self._min_speed = (
+            config.manual_min_speed if manual_mode else config.min_speed
+        )
+        self._turn_step = (
+            config.manual_turn_step if manual_mode else 10.0
+        )
+        # Speed delta per SPEED_UP / SLOW_DOWN action — proportional to profile
+        self._speed_delta = 1.0 if manual_mode else 2.0
 
         # State – initialised properly by reset()
         self.state = VehicleState(
             x=float(config.screen_width // 2),
             y=float(config.screen_height // 2),
             angle=0.0,
-            speed=config.default_speed,
+            speed=self._default_speed,
         )
 
         # Radar system wired from config
@@ -90,6 +112,8 @@ class Car:
     ) -> None:
         """Restore the car to a spawn position for a new episode.
 
+        Uses the mode-appropriate default speed (manual vs AI).
+
         Args:
             spawn_x: Starting X position (top-left of sprite).
             spawn_y: Starting Y position (top-left of sprite).
@@ -99,7 +123,7 @@ class Car:
             x=spawn_x,
             y=spawn_y,
             angle=spawn_angle,
-            speed=self.config.default_speed,
+            speed=self._default_speed,
         )
         self._rotated_sprite = self._sprite
 
@@ -110,11 +134,13 @@ class Car:
     def apply_action(self, action: Action | int) -> None:
         """Update speed and angle based on a discrete action.
 
-        Mirrors the control scheme from ``newcar.py``:
-        - TURN_LEFT  → angle += 10°
-        - TURN_RIGHT → angle -= 10°
-        - SLOW_DOWN  → speed -= 2 (clamped to min_speed)
-        - SPEED_UP   → speed += 2 (clamped to max_speed)
+        Uses mode-specific turn step and speed delta so manual mode feels
+        slower and more controllable than AI training mode.
+
+        - TURN_LEFT  → angle += turn_step°
+        - TURN_RIGHT → angle -= turn_step°
+        - SLOW_DOWN  → speed -= speed_delta (clamped to min_speed)
+        - SPEED_UP   → speed += speed_delta (clamped to max_speed)
 
         Args:
             action: One of the :class:`Action` values (or its int equivalent).
@@ -122,13 +148,13 @@ class Car:
         action = Action(action)
         s = self.state
         if action == Action.TURN_LEFT:
-            s.angle += 10.0
+            s.angle += self._turn_step
         elif action == Action.TURN_RIGHT:
-            s.angle -= 10.0
+            s.angle -= self._turn_step
         elif action == Action.SLOW_DOWN:
-            s.speed = clamp(s.speed - 2.0, self.config.min_speed, self.config.max_speed)
+            s.speed = clamp(s.speed - self._speed_delta, self._min_speed, self._max_speed)
         elif action == Action.SPEED_UP:
-            s.speed = clamp(s.speed + 2.0, self.config.min_speed, self.config.max_speed)
+            s.speed = clamp(s.speed + self._speed_delta, self._min_speed, self._max_speed)
 
     # ------------------------------------------------------------------
     # Physics update
@@ -190,15 +216,40 @@ class Car:
         return self.radar.normalized_inputs(self.state, game_map)
 
     def get_reward(self) -> float:
-        """Return the reward signal for the current episode step.
+        """Return the accumulated fitness/reward for this episode.
 
-        Mirrors ``newcar.py``'s ``get_reward``:
-        ``distance_travelled / (car_size_x / 2)``
+        Fitness is composed of:
+        - Base score: distance_travelled normalised by half the car width
+          (same as the original formula, keeps values in a familiar range).
+        - Survival bonus: small bonus per time-step alive, rewarding
+          staying on track longer.
+        - Stagnation penalty: if the car has been alive a long time but
+          hasn't moved much, the raw distance score already captures this
+          naturally — no extra penalty needed.
+
+        The result is always non-negative.
 
         Returns:
-            Non-negative float reward.
+            Non-negative float fitness value.
         """
-        return self.state.distance_travelled / self.config.car_half_size()
+        half = self.config.car_half_size()
+        distance_score = self.state.distance_travelled / half
+
+        # Small survival bonus: 0.1 per time-step alive (encourages staying
+        # on track, but distance dominates so spinning in place is not rewarded)
+        survival_bonus = self.state.time_steps * 0.1
+
+        # Efficiency ratio: reward cars that cover distance quickly.
+        # Avoids inflating score for cars that survive by barely moving.
+        if self.state.time_steps > 0:
+            efficiency = self.state.distance_travelled / self.state.time_steps
+            # Normalise: AI default speed is ~20 px/tick, so efficiency near 1.0
+            # means the car is moving at roughly full speed.
+            efficiency_bonus = efficiency * 0.5
+        else:
+            efficiency_bonus = 0.0
+
+        return max(0.0, distance_score + survival_bonus + efficiency_bonus)
 
     def is_alive(self) -> bool:
         """Return whether the car has not yet crashed."""
