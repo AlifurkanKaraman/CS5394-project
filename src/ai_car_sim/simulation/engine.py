@@ -98,6 +98,8 @@ class SimulationEngine:
         self._last_best_fitness: float = 0.0
         self._last_avg_fitness: float = 0.0
         self._last_species_count: int | None = None
+        self._last_best_distance: float = 0.0
+        self._last_best_checkpoints: int = 0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -182,7 +184,7 @@ class SimulationEngine:
 
             network = neat.nn.FeedForwardNetwork.create(genome, neat_config)
             driver = NeatDriver(network, expected_outputs=len(Action))
-            car = Car(self.config, sprite_surface=self._car_sprite)
+            car = Car(self.config, sprite_surface=self._car_sprite, track=self.track)
             car.reset(ox, oy, angle)
             self._cars.append(car)
             self._drivers.append(driver)
@@ -253,18 +255,19 @@ class SimulationEngine:
         fitnesses = [g.fitness for g in self._genomes if g.fitness is not None]
         best_fit = max(fitnesses) if fitnesses else 0.0
         avg_fit = sum(fitnesses) / len(fitnesses) if fitnesses else 0.0
+        best_dist = max((c.distance_travelled for c in self._cars), default=0.0)
+        best_cp = max((c.checkpoints_reached for c in self._cars), default=0)
 
-        logger.debug(
-            "Generation %d: fitness range [%.3f, %.3f], avg=%.3f",
-            self._generation,
-            min(fitnesses) if fitnesses else 0.0,
-            best_fit,
-            avg_fit,
+        logger.info(
+            "Gen %d | best_fit=%.1f avg_fit=%.1f best_dist=%.0fpx best_cp=%d",
+            self._generation, best_fit, avg_fit, best_dist, best_cp,
         )
 
         # Store for HUD access
         self._last_best_fitness = best_fit
         self._last_avg_fitness = avg_fit
+        self._last_best_distance = best_dist
+        self._last_best_checkpoints = best_cp
 
     # ------------------------------------------------------------------
     # Generation loop
@@ -604,6 +607,12 @@ class SimulationEngine:
         avg_fitness = (
             sum(alive_fitnesses) / len(alive_fitnesses) if alive_fitnesses else 0.0
         )
+        best_dist = max(
+            (c.distance_travelled for c in self._cars if c.is_alive()), default=0.0
+        )
+        best_cp = max(
+            (c.checkpoints_reached for c in self._cars if c.is_alive()), default=0
+        )
 
         metrics = HudMetrics(
             generation=self._generation,
@@ -616,6 +625,8 @@ class SimulationEngine:
             elapsed_seconds=elapsed,
             sim_speed=_SPEED_STEPS[self._speed_idx],
             species_count=self._last_species_count,
+            best_distance=best_dist if best_dist > 0 else None,
+            best_checkpoints=best_cp if best_cp > 0 else None,
         )
 
         if self._photo.hud_visible:

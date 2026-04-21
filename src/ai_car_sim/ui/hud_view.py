@@ -45,6 +45,8 @@ class HudMetrics:
         elapsed_seconds: Optional wall-clock seconds for this generation.
         sim_speed: Current simulation speed multiplier (e.g. 1.0, 2.0).
         species_count: Optional number of NEAT species this generation.
+        best_distance: Optional best raw distance (px) this generation.
+        best_checkpoints: Optional highest checkpoint index reached.
     """
 
     generation: int = 0
@@ -58,6 +60,8 @@ class HudMetrics:
     elapsed_seconds: float | None = None
     sim_speed: float = 1.0
     species_count: int | None = None
+    best_distance: float | None = None
+    best_checkpoints: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -133,24 +137,23 @@ class HudView:
     # ------------------------------------------------------------------
 
     def _build_lines(self, metrics: HudMetrics) -> list[tuple[str, Any]]:
-        """Return a list of ``(text, colour)`` pairs for the current frame.
-
-        Args:
-            metrics: Current simulation metrics.
-
-        Returns:
-            Ordered list of ``(label_string, rgb_colour)`` tuples.
-        """
+        """Return a list of ``(text, colour)`` pairs for the current frame."""
         mode_label = metrics.mode.name.capitalize()
         lines: list[tuple[str, Any]] = [
             (f"Mode:       {mode_label}",          _CYAN),
             (f"Generation: {metrics.generation}",  _WHITE),
             (f"Cars:       {metrics.alive_count}/{metrics.total_spawned}", _WHITE),
-            (f"Best fit:   {metrics.best_fitness:.2f}", _YELLOW),
+            (f"Best fit:   {metrics.best_fitness:.1f}", _YELLOW),
         ]
 
         if metrics.avg_fitness is not None:
-            lines.append((f"Avg fit:    {metrics.avg_fitness:.2f}", _GRAY))
+            lines.append((f"Avg fit:    {metrics.avg_fitness:.1f}", _GRAY))
+
+        if metrics.best_distance is not None:
+            lines.append((f"Best dist:  {metrics.best_distance:.0f}px", _GRAY))
+
+        if metrics.best_checkpoints is not None and metrics.best_checkpoints > 0:
+            lines.append((f"Best CP:    {metrics.best_checkpoints}", _YELLOW))
 
         if metrics.species_count is not None:
             lines.append((f"Species:    {metrics.species_count}", _GRAY))

@@ -17,9 +17,20 @@ from ai_car_sim.core.radar_sensor import RadarSensorSystem, MapSurface
 from ai_car_sim.core.collision_service import compute_corners, is_collision
 from ai_car_sim.core.vector_utils import clamp
 from ai_car_sim.ai.driver_interface import Action
+from ai_car_sim.domain.track import Track, Checkpoint
 
 # Re-export so existing imports from this module keep working
 __all__ = ["Car", "Action"]
+
+# ---------------------------------------------------------------------------
+# Stuck-detection constants
+# ---------------------------------------------------------------------------
+# How many ticks between progress snapshots
+_STUCK_CHECK_INTERVAL: int = 60
+# Minimum distance (px) the car must travel per interval to not be stuck
+_STUCK_MIN_DISTANCE: float = 30.0
+# Checkpoint reward bonus per new checkpoint reached
+_CHECKPOINT_BONUS: float = 200.0
 
 
 # ---------------------------------------------------------------------------
@@ -31,6 +42,35 @@ class DrawSurface(Protocol):
     """Subset of pygame.Surface needed for rendering."""
 
     def blit(self, source: object, dest: object) -> object: ...
+
+
+# ---------------------------------------------------------------------------
+# Segment-crossing helper for checkpoint detection
+# ---------------------------------------------------------------------------
+
+def _segments_intersect(
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    p3: tuple[float, float],
+    p4: tuple[float, float],
+) -> bool:
+    """Return True if line segment p1-p2 intersects segment p3-p4.
+
+    Uses the standard cross-product orientation test.
+    """
+    def _cross(o: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    d1 = _cross(p3, p4, p1)
+    d2 = _cross(p3, p4, p2)
+    d3 = _cross(p1, p2, p3)
+    d4 = _cross(p1, p2, p4)
+
+    if ((d1 > 0 and d2 < 0) or (d1 < 0 and d2 > 0)) and \
+       ((d3 > 0 and d4 < 0) or (d3 < 0 and d4 > 0)):
+        return True
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +92,8 @@ class Car:
             speed profile (``manual_default_speed``, ``manual_max_speed``,
             ``manual_min_speed``, ``manual_turn_step``) instead of the
             AI training profile.
+        track: Optional :class:`~ai_car_sim.domain.track.Track` used for
+            checkpoint-based reward.  When ``None`` checkpoints are skipped.
     """
 
     def __init__(
@@ -59,9 +101,11 @@ class Car:
         config: SimulationConfig,
         sprite_surface: object | None = None,
         manual_mode: bool = False,
+        track: Track | None = None,
     ) -> None:
         self.config = config
         self.manual_mode = manual_mode
+        self._track = track
 
         # Sprite (may be None in headless/test mode)
         self._sprite = sprite_surface
@@ -100,6 +144,13 @@ class Car:
             car_size_y=float(config.car_size_y),
         )
 
+        # Stuck detection: snapshot distance every N ticks
+        self._stuck_snapshot_dist: float = 0.0
+        self._stuck_snapshot_tick: int = 0
+
+        # Checkpoint tracking: accumulated bonus from checkpoints
+        self._checkpoint_bonus: float = 0.0
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -112,7 +163,8 @@ class Car:
     ) -> None:
         """Restore the car to a spawn position for a new episode.
 
-        Uses the mode-appropriate default speed (manual vs AI).
+        Clears all per-episode state including stuck detection and
+        checkpoint progress.
 
         Args:
             spawn_x: Starting X position (top-left of sprite).
@@ -126,6 +178,9 @@ class Car:
             speed=self._default_speed,
         )
         self._rotated_sprite = self._sprite
+        self._stuck_snapshot_dist = 0.0
+        self._stuck_snapshot_tick = 0
+        self._checkpoint_bonus = 0.0
 
     # ------------------------------------------------------------------
     # Action application
@@ -161,14 +216,8 @@ class Car:
     # ------------------------------------------------------------------
 
     def update(self, game_map: MapSurface) -> None:
-        """Advance physics, check collision, and update sensor readings.
-
-        Mirrors the ``update`` method from ``newcar.py``:
-        - Move position by speed in the heading direction
-        - Clamp position to screen bounds
-        - Compute rotated sprite (when sprite is available)
-        - Check corner collision against the map
-        - Accumulate distance and time
+        """Advance physics, check collision, run stuck detection, and
+        award checkpoint bonuses.
 
         Args:
             game_map: Map surface used for collision and radar pixel lookup.
@@ -178,6 +227,8 @@ class Car:
 
         s = self.state
         cfg = self.config
+
+        prev_x, prev_y = s.x, s.y
 
         # Move in heading direction (pygame 360-angle convention)
         rad = math.radians(360.0 - s.angle)
@@ -197,8 +248,82 @@ class Car:
             s.mark_crashed()
             return
 
-        # Accumulate metrics
+        # Accumulate distance and time
         s.advance_time(delta_distance=s.speed)
+
+        # Checkpoint detection (only in AI/training mode with a track)
+        if not self.manual_mode and self._track is not None:
+            self._check_checkpoints(prev_x, prev_y, s.x, s.y)
+
+        # Stuck detection (only in AI/training mode)
+        if not self.manual_mode:
+            self._check_stuck()
+
+    def _check_checkpoints(
+        self,
+        prev_x: float,
+        prev_y: float,
+        curr_x: float,
+        curr_y: float,
+    ) -> None:
+        """Award a bonus if the car's movement crosses the next checkpoint.
+
+        Checkpoints must be reached in order; already-passed checkpoints
+        are ignored to prevent farming.
+
+        Args:
+            prev_x: Car X position before this tick's movement.
+            prev_y: Car Y position before this tick's movement.
+            curr_x: Car X position after this tick's movement.
+            curr_y: Car Y position after this tick's movement.
+        """
+        checkpoints = self._track.checkpoints  # type: ignore[union-attr]
+        if not checkpoints:
+            return
+
+        s = self.state
+        next_idx = s.checkpoint_index  # next checkpoint to reach
+
+        if next_idx >= len(checkpoints):
+            return  # all checkpoints already passed
+
+        cp = checkpoints[next_idx]
+        cp_a = (float(cp[0][0]), float(cp[0][1]))
+        cp_b = (float(cp[1][0]), float(cp[1][1]))
+
+        # Use car centre for the movement segment
+        cx_prev = prev_x + self.config.car_size_x / 2.0
+        cy_prev = prev_y + self.config.car_size_y / 2.0
+        cx_curr = curr_x + self.config.car_size_x / 2.0
+        cy_curr = curr_y + self.config.car_size_y / 2.0
+
+        if _segments_intersect(
+            (cx_prev, cy_prev), (cx_curr, cy_curr), cp_a, cp_b
+        ):
+            s.checkpoint_index += 1
+            self._checkpoint_bonus += _CHECKPOINT_BONUS
+            # Update lap_progress as fraction of checkpoints completed
+            s.lap_progress = s.checkpoint_index / len(checkpoints)
+
+    def _check_stuck(self) -> None:
+        """Kill the car if it hasn't made meaningful forward progress.
+
+        Every ``_STUCK_CHECK_INTERVAL`` ticks, compare current
+        ``distance_travelled`` against the snapshot taken at the last
+        check.  If the delta is below ``_STUCK_MIN_DISTANCE`` the car is
+        marked as crashed (inactive) so it stops consuming the generation
+        budget without contributing useful fitness signal.
+        """
+        s = self.state
+        if s.time_steps - self._stuck_snapshot_tick < _STUCK_CHECK_INTERVAL:
+            return
+
+        delta = s.distance_travelled - self._stuck_snapshot_dist
+        self._stuck_snapshot_dist = s.distance_travelled
+        self._stuck_snapshot_tick = s.time_steps
+
+        if delta < _STUCK_MIN_DISTANCE:
+            s.mark_crashed()  # treat stuck as crashed — stops reward accrual
 
     # ------------------------------------------------------------------
     # Sensor / AI interface
@@ -218,42 +343,47 @@ class Car:
     def get_reward(self) -> float:
         """Return the accumulated fitness/reward for this episode.
 
-        Fitness is composed of:
-        - Base score: distance_travelled normalised by half the car width
-          (same as the original formula, keeps values in a familiar range).
-        - Survival bonus: small bonus per time-step alive, rewarding
-          staying on track longer.
-        - Stagnation penalty: if the car has been alive a long time but
-          hasn't moved much, the raw distance score already captures this
-          naturally — no extra penalty needed.
+        Fitness formula (all terms non-negative):
 
-        The result is always non-negative.
+        1. **Distance score** — ``distance_travelled / (car_size_x / 2)``.
+           This is the primary signal: cars that drive further score higher.
+           Normalised so the value is in a human-readable range.
+
+        2. **Checkpoint bonus** — flat bonus per checkpoint crossed
+           (``_CHECKPOINT_BONUS`` per checkpoint).  Only active when the
+           track has checkpoints defined.  Dominates distance score so
+           reaching checkpoints is strongly preferred.
+
+        Intentionally excluded:
+        - Survival bonus (time_steps * k): causes spinning-in-place exploit
+          where a car that does nothing scores higher than one that crashes
+          while driving.
+        - Efficiency bonus: distance already captures this; adding a ratio
+          term creates non-linear interactions that confuse NEAT early on.
 
         Returns:
             Non-negative float fitness value.
         """
-        half = self.config.car_half_size()
-        distance_score = self.state.distance_travelled / half
-
-        # Small survival bonus: 0.1 per time-step alive (encourages staying
-        # on track, but distance dominates so spinning in place is not rewarded)
-        survival_bonus = self.state.time_steps * 0.1
-
-        # Efficiency ratio: reward cars that cover distance quickly.
-        # Avoids inflating score for cars that survive by barely moving.
-        if self.state.time_steps > 0:
-            efficiency = self.state.distance_travelled / self.state.time_steps
-            # Normalise: AI default speed is ~20 px/tick, so efficiency near 1.0
-            # means the car is moving at roughly full speed.
-            efficiency_bonus = efficiency * 0.5
-        else:
-            efficiency_bonus = 0.0
-
-        return max(0.0, distance_score + survival_bonus + efficiency_bonus)
+        distance_score = self.state.distance_travelled / self.config.car_half_size()
+        return max(0.0, distance_score + self._checkpoint_bonus)
 
     def is_alive(self) -> bool:
-        """Return whether the car has not yet crashed."""
+        """Return whether the car has not yet crashed or been stuck-killed."""
         return self.state.alive
+
+    # ------------------------------------------------------------------
+    # Accessors for debug / HUD
+    # ------------------------------------------------------------------
+
+    @property
+    def checkpoints_reached(self) -> int:
+        """Number of checkpoints the car has passed this episode."""
+        return self.state.checkpoint_index
+
+    @property
+    def distance_travelled(self) -> float:
+        """Raw distance travelled this episode in pixels."""
+        return self.state.distance_travelled
 
     # ------------------------------------------------------------------
     # Rendering
