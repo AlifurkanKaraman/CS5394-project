@@ -6,6 +6,22 @@ lived inline in ``newcar.py`` into an explicit, configurable class.
 
 The manager depends on a narrow :class:`EvaluationEngine` protocol so
 the real pygame-based engine can be swapped for a headless stub in tests.
+
+Learning pipeline entry point
+------------------------------
+This class is the bridge between the ``neat-python`` library and the
+simulation engine.  The key call chain is::
+
+    TrainingManager.run_training()
+      → neat.Population.run(self._eval_genomes, n_generations)
+        → [NEAT calls _eval_genomes once per generation]
+          → engine.evaluate_genomes(genomes, neat_config)
+            → creates one Car + NeatDriver per genome
+            → runs the frame loop until all cars crash or time runs out
+            → writes car.get_reward() back to genome.fitness
+          → NEAT reads genome.fitness values and evolves the next generation
+
+See ``docs/how-learning-works.md`` for a full walkthrough.
 """
 
 from __future__ import annotations
@@ -197,31 +213,49 @@ class TrainingManager:
     ) -> None:
         """Callback invoked by NEAT each generation.
 
-        Initialises genome fitness to 0, delegates evaluation to the
-        engine, then fires the optional :attr:`on_generation` hook.
+        This is the **generation boundary** — NEAT calls this function once
+        per generation, passing the full current population as
+        ``(genome_id, genome)`` pairs.  After this function returns, NEAT
+        reads ``genome.fitness`` from every genome and uses those values to
+        select parents, apply mutation, and build the next generation.
+
+        Sequence:
+        1. Reset all genome fitness values to 0.0 (prevent stale carry-over).
+        2. Delegate to ``engine.evaluate_genomes()`` which spawns cars,
+           runs the frame loop, and writes fitness back to each genome.
+        3. Increment the local generation counter.
+        4. Push species count to the engine for HUD display.
+        5. Fire the optional ``on_generation`` callback (used by ``main.py``
+           to detect Q-press and raise ``_ReturnToMenu``).
 
         Args:
             genomes: List of ``(genome_id, genome)`` pairs.
             neat_config: Active NEAT configuration.
         """
-        # Reset fitness before evaluation so stale values from a previous
-        # generation never bleed into the current one.
+        # --- Step 1: Reset fitness so stale values from a previous generation
+        # never bleed into the current one.  genome.fitness must be set to a
+        # float before NEAT can use it; None would cause a TypeError.
         for _, genome in genomes:
             genome.fitness = 0.0
 
+        # --- Step 2: Run the simulation for this generation.
+        # engine.evaluate_genomes() creates one Car + NeatDriver per genome,
+        # runs the frame loop, then writes car.get_reward() → genome.fitness.
         self.engine.evaluate_genomes(genomes, neat_config)
 
         self._generation += 1
 
-        # Push species count to the engine for HUD display (optional — only
-        # if the engine exposes set_species_count and the population is ready).
+        # --- Step 4: Push species count to the engine for HUD display.
+        # Non-critical — wrapped in try/except so a missing attribute never
+        # breaks training.
         if self._population is not None and hasattr(self.engine, "set_species_count"):
             try:
                 species_count = len(self._population.species.species)
                 self.engine.set_species_count(species_count)  # type: ignore[attr-defined]
             except Exception:
-                pass  # non-critical; don't break training over HUD data
+                pass
 
+        # --- Step 5: Fire the on_generation hook (e.g. to detect Q-press).
         if self.on_generation is not None:
             best = max(
                 (g.fitness for _, g in genomes if g.fitness is not None),

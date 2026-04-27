@@ -222,7 +222,17 @@ class SimulationEngine:
         """Run one full generation and assign fitness to each genome.
 
         Called by :class:`~ai_car_sim.ai.training_manager.TrainingManager`
-        via the ``EvaluationEngine`` protocol.
+        via the ``EvaluationEngine`` protocol.  This is where the simulation
+        and the NEAT algorithm meet:
+
+        1. ``create_cars_for_genomes()`` — one Car + NeatDriver per genome
+        2. ``run_generation()`` — frame loop until all cars crash or timeout
+        3. fitness write-back — ``genome.fitness = car.get_reward()``
+
+        The genome list and car list are kept **index-aligned** throughout:
+        ``self._genomes[i]`` always corresponds to ``self._cars[i]``.
+        This is the critical invariant that ensures each genome receives
+        only its own car's fitness and not another car's.
 
         Args:
             genomes: ``(genome_id, genome)`` pairs from NEAT.
@@ -247,8 +257,11 @@ class SimulationEngine:
 
         self.run_generation()
 
-        # Write accumulated fitness back to genomes — each genome gets the
-        # reward from its own corresponding car (index-aligned).
+        # --- Fitness write-back (index-aligned: genome[i] ↔ car[i]) ---
+        # This is the critical step where NEAT receives the learning signal.
+        # Each genome's fitness is set exclusively from its own car's reward.
+        # No cross-contamination between genomes is possible because the lists
+        # were built together in create_cars_for_genomes() and never reordered.
         for genome, car in zip(self._genomes, self._cars):
             genome.fitness = car.get_reward()
 
