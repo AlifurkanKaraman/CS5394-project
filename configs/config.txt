@@ -5,7 +5,7 @@ pop_size              = 50
 reset_on_extinction   = True
 no_fitness_termination = False
 
-[DefaultGenome]
+[Default Genome]
 # node activation options
 activation_default      = tanh
 activation_mutate_rate  = 0.01
