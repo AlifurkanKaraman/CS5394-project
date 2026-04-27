@@ -189,7 +189,12 @@ def run_simulation(genomes, config):
         # Exit On Quit Event
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                sys.exit(0)
+                pygame.quit()
+
+            if event.type==pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    pygame.quit()
+
 
         # For Each Car Get The Acton It Takes
         for i, car in enumerate(cars):
