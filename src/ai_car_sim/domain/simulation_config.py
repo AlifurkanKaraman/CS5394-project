@@ -6,6 +6,15 @@ screen sizing, and runtime modes.  Replaces the hardcoded constants that
 lived in the original single-file script.
 
 Only standard-library dependencies are used (``json``, ``pathlib``).
+
+Configuration guide
+-------------------
+All speed, radar, and timing values are fields on :class:`SimulationConfig`
+with documented defaults.  NEAT hyperparameters (population size, mutation
+rates, speciation) live separately in ``configs/config.txt``.
+
+See ``docs/how-learning-works.md`` — section "Where Speed and Control Values
+Are Configured" — for a complete reference table.
 """
 
 from __future__ import annotations

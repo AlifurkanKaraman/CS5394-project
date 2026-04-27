@@ -1,3 +1,16 @@
+# NEAT Configuration for AI Car Simulation
+#
+# This file controls the evolutionary algorithm (neat-python library).
+# Python-side physics values (speed, radar, FPS) live in:
+#   src/ai_car_sim/domain/simulation_config.py
+#
+# Full parameter guide: docs/how-learning-works.md
+#   → Section "Where Speed and Control Values Are Configured"
+#
+# CRITICAL CONSTRAINT: num_inputs must equal len(SimulationConfig.radar_angles)
+# and num_outputs must equal len(Action) in driver_interface.py (currently 4).
+# Changing either without updating the other will crash training.
+
 [NEAT]
 fitness_criterion     = max
 fitness_threshold     = 100000000
