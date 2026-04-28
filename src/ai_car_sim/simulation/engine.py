@@ -26,6 +26,7 @@ from ai_car_sim.ui.hud_view import HudView, HudMetrics, SimMode
 from ai_car_sim.ui.photo_mode import PhotoMode
 from ai_car_sim.ui.generation_overlay import GenerationOverlay
 from ai_car_sim.analytics.best_tracker import BestPerformanceTracker
+from ai_car_sim.ui.crash_effects import CrashEffectsSystem
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class SimulationEngine:
         self._hud = HudView()
         self._photo = PhotoMode()
         self._gen_overlay = GenerationOverlay()
+        self._crash_fx = CrashEffectsSystem()
         self._initialized = False
 
         # Speed control
@@ -256,6 +258,9 @@ class SimulationEngine:
 
         self.create_cars_for_genomes(genomes, neat_config)
         self._generation += 1
+
+        # Clear any leftover crash effects from the previous generation
+        self._crash_fx.clear()
 
         # Trigger generation overlay
         if not self.headless:
@@ -451,6 +456,7 @@ class SimulationEngine:
         while not self._return_to_menu:
             # Spawn / respawn — use manual_mode=True for slower speed profile
             self.create_replay_car(driver, manual_mode=True)
+            self._crash_fx.clear()
             self._generation += 1
             if not self.headless:
                 self._gen_overlay.show(self._generation)
@@ -503,8 +509,13 @@ class SimulationEngine:
         """Render one frame for manual mode."""
         import pygame
 
-        self._screen.blit(self._game_map, (0, 0))
+        shake = self._crash_fx.shake_offset()
+        self._screen.blit(self._game_map, shake)
         car.draw(self._screen)
+
+        # Crash effects on top of car, below HUD
+        self._crash_fx.draw(self._screen)
+        self._crash_fx.tick()
 
         metrics = HudMetrics(
             generation=self._generation,
@@ -611,8 +622,23 @@ class SimulationEngine:
     # ------------------------------------------------------------------
 
     def _step_all(self) -> int:
-        """Step all internal cars/drivers against the loaded map."""
-        return self.step(self._cars, self._drivers, self._game_map)
+        """Step all internal cars/drivers against the loaded map.
+
+        Detects cars that crash this tick and registers crash effects for them.
+        """
+        # Snapshot alive state before the step so we can detect new crashes
+        was_alive = [c.is_alive() for c in self._cars]
+        alive = self.step(self._cars, self._drivers, self._game_map)
+
+        # Register crash effects for any car that just died this tick
+        if not self.headless:
+            for car, previously_alive in zip(self._cars, was_alive):
+                if previously_alive and not car.is_alive():
+                    pos = car.crash_position
+                    if pos is not None:
+                        self._crash_fx.register_crash(pos[0], pos[1])
+
+        return alive
 
     def _render_frame(
         self,
@@ -622,14 +648,20 @@ class SimulationEngine:
         elapsed: float = 0.0,
         dt: float = 0.0,
     ) -> None:
-        """Draw map, cars, HUD, generation overlay, and photo-mode overlays."""
+        """Draw map, cars, crash effects, HUD, generation overlay, and photo-mode overlays."""
         import pygame
 
-        self._screen.blit(self._game_map, (0, 0))
+        # Apply screen shake offset to the map blit position
+        shake = self._crash_fx.shake_offset()
+        self._screen.blit(self._game_map, shake)
 
         for car in self._cars:
             if car.is_alive():
                 car.draw(self._screen)
+
+        # Crash effects drawn on top of cars, below HUD
+        self._crash_fx.draw(self._screen)
+        self._crash_fx.tick()
 
         alive_fitnesses = [c.get_reward() for c in self._cars if c.is_alive()]
         best_fitness = max(alive_fitnesses, default=0.0)
