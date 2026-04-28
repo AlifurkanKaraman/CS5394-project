@@ -385,6 +385,18 @@ class Car:
         """Raw distance travelled this episode in pixels."""
         return self.state.distance_travelled
 
+    @property
+    def crash_position(self) -> tuple[float, float] | None:
+        """Centre position of the car at the moment of crash, or ``None`` if alive.
+
+        Used by the crash effects system to spawn particles at the right location.
+        """
+        if self.state.alive:
+            return None
+        cx = self.state.x + self.config.car_size_x / 2.0
+        cy = self.state.y + self.config.car_size_y / 2.0
+        return (cx, cy)
+
     # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------
