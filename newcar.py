@@ -102,7 +102,7 @@ class Car:
         # Same For Y-Position
         self.position[1] += math.sin(math.radians(360 - self.angle)) * self.speed
         self.position[1] = max(self.position[1], 20)
-        self.position[1] = min(self.position[1], WIDTH - 120)
+        self.position[1] = min(self.position[1], HEIGHT - 120)
 
         # Calculate New Center
         self.center = [int(self.position[0]) + CAR_SIZE_X / 2, int(self.position[1]) + CAR_SIZE_Y / 2]
@@ -191,7 +191,7 @@ def run_simulation(genomes, config):
                 sys.exit(0)
 
             if event.type==pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+                if event.key == pygame.K_ESCAPE or or event.key == pygame.K_q:
                     pygame.quit()
                     sys.exit()
 
