@@ -25,6 +25,7 @@ from ai_car_sim.ai.neat_driver import NeatDriver
 from ai_car_sim.ui.hud_view import HudView, HudMetrics, SimMode
 from ai_car_sim.ui.photo_mode import PhotoMode
 from ai_car_sim.ui.generation_overlay import GenerationOverlay
+from ai_car_sim.analytics.best_tracker import BestPerformanceTracker
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,11 @@ class SimulationEngine:
         self._last_species_count: int | None = None
         self._last_best_distance: float = 0.0
         self._last_best_checkpoints: int = 0
+
+        # Persistent all-time best performance tracker
+        self._best_tracker = BestPerformanceTracker.load(
+            f"{config.output_dir}/best_performance.json"
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -281,6 +287,16 @@ class SimulationEngine:
         self._last_avg_fitness = avg_fit
         self._last_best_distance = best_dist
         self._last_best_checkpoints = best_cp
+
+        # Update and persist all-time best records
+        self._best_tracker.update(
+            generation=self._generation,
+            track_name=self.track.name,
+            best_fitness=best_fit,
+            best_distance=best_dist,
+            best_checkpoints=best_cp,
+        )
+        self._best_tracker.save(f"{self.config.output_dir}/best_performance.json")
 
     # ------------------------------------------------------------------
     # Generation loop
@@ -640,6 +656,24 @@ class SimulationEngine:
             species_count=self._last_species_count,
             best_distance=best_dist if best_dist > 0 else None,
             best_checkpoints=best_cp if best_cp > 0 else None,
+            # All-time bests from persistent tracker
+            all_time_best_fitness=(
+                self._best_tracker.best_fitness
+                if self._best_tracker.has_any_record() else None
+            ),
+            all_time_best_fitness_gen=(
+                self._best_tracker.best_fitness_generation
+                if self._best_tracker.has_any_record() else None
+            ),
+            all_time_best_distance=(
+                self._best_tracker.best_distance
+                if self._best_tracker.best_distance > 0 else None
+            ),
+            all_time_best_checkpoints=(
+                self._best_tracker.best_checkpoints
+                if self._best_tracker.best_checkpoints > 0 else None
+            ),
+            total_generations_trained=self._best_tracker.total_generations_trained,
         )
 
         if self._photo.hud_visible:
@@ -788,3 +822,8 @@ class SimulationEngine:
             count: Number of active NEAT species.
         """
         self._last_species_count = count
+
+    @property
+    def best_tracker(self) -> "BestPerformanceTracker":
+        """The persistent all-time best performance tracker."""
+        return self._best_tracker
