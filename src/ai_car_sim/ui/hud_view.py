@@ -47,6 +47,11 @@ class HudMetrics:
         species_count: Optional number of NEAT species this generation.
         best_distance: Optional best raw distance (px) this generation.
         best_checkpoints: Optional highest checkpoint index reached.
+        all_time_best_fitness: All-time best fitness across all runs.
+        all_time_best_fitness_gen: Generation where all-time best fitness occurred.
+        all_time_best_distance: All-time best distance (px) across all runs.
+        all_time_best_checkpoints: All-time most checkpoints reached.
+        total_generations_trained: Cumulative generations trained across all runs.
     """
 
     generation: int = 0
@@ -62,6 +67,13 @@ class HudMetrics:
     species_count: int | None = None
     best_distance: float | None = None
     best_checkpoints: int | None = None
+
+    # All-time bests (populated from BestPerformanceTracker)
+    all_time_best_fitness: float | None = None
+    all_time_best_fitness_gen: int | None = None
+    all_time_best_distance: float | None = None
+    all_time_best_checkpoints: int | None = None
+    total_generations_trained: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +106,7 @@ _YELLOW = (255, 220,  50)
 _CYAN   = ( 80, 220, 220)
 _GRAY   = (180, 180, 180)
 _BLACK  = (  0,   0,   0)
+_GREEN  = ( 80, 220, 120)   # all-time record highlights
 
 
 class HudView:
@@ -171,6 +184,30 @@ class HudView:
 
         if metrics.elapsed_seconds is not None:
             lines.append((f"Time:       {metrics.elapsed_seconds:.1f}s", _GRAY))
+
+        # ------------------------------------------------------------------
+        # All-time best records section
+        # ------------------------------------------------------------------
+        has_records = (
+            metrics.all_time_best_fitness is not None
+            and metrics.all_time_best_fitness > 0.0
+        )
+        if has_records:
+            lines.append(("── All-time bests ──", _GRAY))
+
+            fit = metrics.all_time_best_fitness
+            gen = metrics.all_time_best_fitness_gen
+            gen_str = f" (gen {gen})" if gen else ""
+            lines.append((f"★ Fitness:  {fit:.1f}{gen_str}", _GREEN))
+
+            if metrics.all_time_best_distance is not None and metrics.all_time_best_distance > 0:
+                lines.append((f"★ Distance: {metrics.all_time_best_distance:.0f}px", _GREEN))
+
+            if metrics.all_time_best_checkpoints is not None and metrics.all_time_best_checkpoints > 0:
+                lines.append((f"★ Checkpts: {metrics.all_time_best_checkpoints}", _GREEN))
+
+            if metrics.total_generations_trained is not None:
+                lines.append((f"Total gens: {metrics.total_generations_trained}", _GRAY))
 
         return lines
 
