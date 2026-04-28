@@ -90,22 +90,30 @@ def build_default_tracks(config) -> list:
     """
     from ai_car_sim.domain.track import Track
 
-    map_paths = [
-        "assets/maps/map.png",
-        "assets/maps/map2.png",
-        "assets/maps/map3.png",
-        "assets/maps/map4.png",
-        "assets/maps/map5.png",
+    # (name, map_path, spawn_position, spawn_angle, difficulty_label, description)
+    _TRACK_DEFS = [
+        ("Map 1", "assets/maps/map.png",  (830.0, 920.0), 0.0,
+         "Easy",   "Wide lanes, gentle curves — good for early training"),
+        ("Map 2", "assets/maps/map2.png", (830.0, 920.0), 0.0,
+         "Easy",   "Slightly tighter corners than Map 1"),
+        ("Map 3", "assets/maps/map3.png", (830.0, 920.0), 0.0,
+         "Medium", "Mixed straights and hairpins"),
+        ("Map 4", "assets/maps/map4.png", (830.0, 920.0), 0.0,
+         "Medium", "Narrow sections require precise steering"),
+        ("Map 5", "assets/maps/map5.png", (830.0, 920.0), 0.0,
+         "Hard",   "Complex layout — challenging for early generations"),
     ]
+
     tracks = [
         Track(
-            name=f"Map {i + 1}",
-            map_image_path=p,
-            spawn_position=(830.0, 920.0),
-            spawn_angle=0.0,
+            name=name,
+            map_image_path=path,
+            spawn_position=spawn,
+            spawn_angle=angle,
             border_color=config.border_color,
+            description=desc,
         )
-        for i, p in enumerate(map_paths)
+        for name, path, spawn, angle, _diff, desc in _TRACK_DEFS
     ]
     return tracks
 
@@ -255,7 +263,7 @@ def run_menu(config, tracks: list) -> None:
         tracks: Available tracks to choose from.
     """
     import pygame
-    from ai_car_sim.ui.menu_controller import MenuController, MenuAction
+    from ai_car_sim.ui.menu_controller import MenuController, MenuAction, TrackInfo, Difficulty
     from ai_car_sim.ui.hud_view import SimMode
 
     # One pygame init for the whole application lifetime
@@ -267,11 +275,28 @@ def run_menu(config, tracks: list) -> None:
     pygame.display.set_caption("AI Car Simulation")
     clock = pygame.time.Clock()
 
-    track_names = [t.name for t in tracks]
+    # Difficulty mapping — must match _TRACK_DEFS order in build_default_tracks()
+    _DIFFICULTIES = [
+        Difficulty.EASY,
+        Difficulty.EASY,
+        Difficulty.MEDIUM,
+        Difficulty.MEDIUM,
+        Difficulty.HARD,
+    ]
+
+    track_infos = [
+        TrackInfo(
+            name=t.name,
+            map_image_path=t.map_image_path,
+            difficulty=_DIFFICULTIES[i] if i < len(_DIFFICULTIES) else Difficulty.MEDIUM,
+            description=t.description,
+        )
+        for i, t in enumerate(tracks)
+    ]
 
     while True:
         # ---- Menu loop ----
-        menu = MenuController(tracks=track_names)
+        menu = MenuController(tracks=track_infos)
         menu_running = True
         while menu_running:
             for event in pygame.event.get():

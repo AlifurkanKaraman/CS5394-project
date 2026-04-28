@@ -6,6 +6,9 @@ prototype into a clean, modular Python package.
 
 > Full architecture documentation, class diagram, and design decisions:
 > **[docs/architecture.md](docs/architecture.md)**
+>
+> How the NEAT learning algorithm works, fitness design, and configuration guide:
+> **[docs/how-learning-works.md](docs/how-learning-works.md)**
 
 ## Features
 

@@ -25,6 +25,8 @@ from ai_car_sim.ai.neat_driver import NeatDriver
 from ai_car_sim.ui.hud_view import HudView, HudMetrics, SimMode
 from ai_car_sim.ui.photo_mode import PhotoMode
 from ai_car_sim.ui.generation_overlay import GenerationOverlay
+from ai_car_sim.analytics.best_tracker import BestPerformanceTracker
+from ai_car_sim.ui.crash_effects import CrashEffectsSystem
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,7 @@ class SimulationEngine:
         self._hud = HudView()
         self._photo = PhotoMode()
         self._gen_overlay = GenerationOverlay()
+        self._crash_fx = CrashEffectsSystem()
         self._initialized = False
 
         # Speed control
@@ -100,6 +103,11 @@ class SimulationEngine:
         self._last_species_count: int | None = None
         self._last_best_distance: float = 0.0
         self._last_best_checkpoints: int = 0
+
+        # Persistent all-time best performance tracker
+        self._best_tracker = BestPerformanceTracker.load(
+            f"{config.output_dir}/best_performance.json"
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -222,7 +230,17 @@ class SimulationEngine:
         """Run one full generation and assign fitness to each genome.
 
         Called by :class:`~ai_car_sim.ai.training_manager.TrainingManager`
-        via the ``EvaluationEngine`` protocol.
+        via the ``EvaluationEngine`` protocol.  This is where the simulation
+        and the NEAT algorithm meet:
+
+        1. ``create_cars_for_genomes()`` — one Car + NeatDriver per genome
+        2. ``run_generation()`` — frame loop until all cars crash or timeout
+        3. fitness write-back — ``genome.fitness = car.get_reward()``
+
+        The genome list and car list are kept **index-aligned** throughout:
+        ``self._genomes[i]`` always corresponds to ``self._cars[i]``.
+        This is the critical invariant that ensures each genome receives
+        only its own car's fitness and not another car's.
 
         Args:
             genomes: ``(genome_id, genome)`` pairs from NEAT.
@@ -241,14 +259,20 @@ class SimulationEngine:
         self.create_cars_for_genomes(genomes, neat_config)
         self._generation += 1
 
+        # Clear any leftover crash effects from the previous generation
+        self._crash_fx.clear()
+
         # Trigger generation overlay
         if not self.headless:
             self._gen_overlay.show(self._generation)
 
         self.run_generation()
 
-        # Write accumulated fitness back to genomes — each genome gets the
-        # reward from its own corresponding car (index-aligned).
+        # --- Fitness write-back (index-aligned: genome[i] ↔ car[i]) ---
+        # This is the critical step where NEAT receives the learning signal.
+        # Each genome's fitness is set exclusively from its own car's reward.
+        # No cross-contamination between genomes is possible because the lists
+        # were built together in create_cars_for_genomes() and never reordered.
         for genome, car in zip(self._genomes, self._cars):
             genome.fitness = car.get_reward()
 
@@ -268,6 +292,16 @@ class SimulationEngine:
         self._last_avg_fitness = avg_fit
         self._last_best_distance = best_dist
         self._last_best_checkpoints = best_cp
+
+        # Update and persist all-time best records
+        self._best_tracker.update(
+            generation=self._generation,
+            track_name=self.track.name,
+            best_fitness=best_fit,
+            best_distance=best_dist,
+            best_checkpoints=best_cp,
+        )
+        self._best_tracker.save(f"{self.config.output_dir}/best_performance.json")
 
     # ------------------------------------------------------------------
     # Generation loop
@@ -422,6 +456,7 @@ class SimulationEngine:
         while not self._return_to_menu:
             # Spawn / respawn — use manual_mode=True for slower speed profile
             self.create_replay_car(driver, manual_mode=True)
+            self._crash_fx.clear()
             self._generation += 1
             if not self.headless:
                 self._gen_overlay.show(self._generation)
@@ -474,8 +509,13 @@ class SimulationEngine:
         """Render one frame for manual mode."""
         import pygame
 
-        self._screen.blit(self._game_map, (0, 0))
+        shake = self._crash_fx.shake_offset()
+        self._screen.blit(self._game_map, shake)
         car.draw(self._screen)
+
+        # Crash effects on top of car, below HUD
+        self._crash_fx.draw(self._screen)
+        self._crash_fx.tick()
 
         metrics = HudMetrics(
             generation=self._generation,
@@ -582,8 +622,23 @@ class SimulationEngine:
     # ------------------------------------------------------------------
 
     def _step_all(self) -> int:
-        """Step all internal cars/drivers against the loaded map."""
-        return self.step(self._cars, self._drivers, self._game_map)
+        """Step all internal cars/drivers against the loaded map.
+
+        Detects cars that crash this tick and registers crash effects for them.
+        """
+        # Snapshot alive state before the step so we can detect new crashes
+        was_alive = [c.is_alive() for c in self._cars]
+        alive = self.step(self._cars, self._drivers, self._game_map)
+
+        # Register crash effects for any car that just died this tick
+        if not self.headless:
+            for car, previously_alive in zip(self._cars, was_alive):
+                if previously_alive and not car.is_alive():
+                    pos = car.crash_position
+                    if pos is not None:
+                        self._crash_fx.register_crash(pos[0], pos[1])
+
+        return alive
 
     def _render_frame(
         self,
@@ -593,14 +648,20 @@ class SimulationEngine:
         elapsed: float = 0.0,
         dt: float = 0.0,
     ) -> None:
-        """Draw map, cars, HUD, generation overlay, and photo-mode overlays."""
+        """Draw map, cars, crash effects, HUD, generation overlay, and photo-mode overlays."""
         import pygame
 
-        self._screen.blit(self._game_map, (0, 0))
+        # Apply screen shake offset to the map blit position
+        shake = self._crash_fx.shake_offset()
+        self._screen.blit(self._game_map, shake)
 
         for car in self._cars:
             if car.is_alive():
                 car.draw(self._screen)
+
+        # Crash effects drawn on top of cars, below HUD
+        self._crash_fx.draw(self._screen)
+        self._crash_fx.tick()
 
         alive_fitnesses = [c.get_reward() for c in self._cars if c.is_alive()]
         best_fitness = max(alive_fitnesses, default=0.0)
@@ -627,6 +688,24 @@ class SimulationEngine:
             species_count=self._last_species_count,
             best_distance=best_dist if best_dist > 0 else None,
             best_checkpoints=best_cp if best_cp > 0 else None,
+            # All-time bests from persistent tracker
+            all_time_best_fitness=(
+                self._best_tracker.best_fitness
+                if self._best_tracker.has_any_record() else None
+            ),
+            all_time_best_fitness_gen=(
+                self._best_tracker.best_fitness_generation
+                if self._best_tracker.has_any_record() else None
+            ),
+            all_time_best_distance=(
+                self._best_tracker.best_distance
+                if self._best_tracker.best_distance > 0 else None
+            ),
+            all_time_best_checkpoints=(
+                self._best_tracker.best_checkpoints
+                if self._best_tracker.best_checkpoints > 0 else None
+            ),
+            total_generations_trained=self._best_tracker.total_generations_trained,
         )
 
         if self._photo.hud_visible:
@@ -775,3 +854,8 @@ class SimulationEngine:
             count: Number of active NEAT species.
         """
         self._last_species_count = count
+
+    @property
+    def best_tracker(self) -> "BestPerformanceTracker":
+        """The persistent all-time best performance tracker."""
+        return self._best_tracker

@@ -1,5 +1,3 @@
-# This Code is Heavily Inspired By The YouTuber: Cheesy AI
-# Code Changed, Optimized And Commented By: NeuralNine (Florian Dedov)
 
 import math
 import random
@@ -27,8 +25,8 @@ class Car:
 
     def __init__(self):
         # Load Car Sprite and Rotate
-        self.sprite = pygame.image.load('assets/cars/car.png').convert() # Convert Speeds Up A Lot
-        self.sprite = pygame.transform.scale(self.sprite, (CAR_SIZE_X, CAR_SIZE_Y))
+        self.sprite = pygame.image.load('assets/cars/car.png').convert_alpha() # Convert Speeds Up A Lot
+        self.sprite = pygame.transform.smoothscale(self.sprite, (CAR_SIZE_X, CAR_SIZE_Y))
         self.rotated_sprite = self.sprite 
 
         # self.position = [690, 740] # Starting Position
@@ -104,7 +102,7 @@ class Car:
         # Same For Y-Position
         self.position[1] += math.sin(math.radians(360 - self.angle)) * self.speed
         self.position[1] = max(self.position[1], 20)
-        self.position[1] = min(self.position[1], WIDTH - 120)
+        self.position[1] = min(self.position[1], HEIGHT - 120)
 
         # Calculate New Center
         self.center = [int(self.position[0]) + CAR_SIZE_X / 2, int(self.position[1]) + CAR_SIZE_Y / 2]
@@ -189,7 +187,14 @@ def run_simulation(genomes, config):
         # Exit On Quit Event
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                pygame.quit()
                 sys.exit(0)
+
+            if event.type==pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE or or event.key == pygame.K_q:
+                    pygame.quit()
+                    sys.exit()
+
 
         # For Each Car Get The Acton It Takes
         for i, car in enumerate(cars):

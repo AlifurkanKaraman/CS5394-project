@@ -73,8 +73,21 @@ class NeatDriver(DriverInterface):
     ) -> Action:
         """Activate the NEAT network and return the argmax action.
 
+        This is the **neural network forward pass** — the core of the AI
+        decision loop.  Each tick, the simulation calls this method with
+        the car's 5 normalised radar distances.  The network produces 4
+        output activations (one per action) and the action with the highest
+        activation is selected.
+
+        Output index → Action mapping (defined in ``driver_interface.py``):
+        - index 0 → ``Action.TURN_LEFT``
+        - index 1 → ``Action.TURN_RIGHT``
+        - index 2 → ``Action.SLOW_DOWN``
+        - index 3 → ``Action.SPEED_UP``
+
         Args:
             sensor_inputs: Normalised radar distances in ``[0.0, 1.0]``.
+                5 values, one per radar angle (−90°, −45°, 0°, +45°, +90°).
             state: Current vehicle state (not used by a feed-forward
                 network but available for future recurrent drivers).
 
@@ -87,8 +100,10 @@ class NeatDriver(DriverInterface):
                 returns a different number of activations.
             ValueError: If the network returns an empty output vector.
         """
+        # Forward pass: sensor distances → network → 4 activation scores
         outputs = self._network.activate(sensor_inputs)
         self._validate_outputs(outputs)
+        # Argmax: the action with the highest score wins this tick
         return Action(outputs.index(max(outputs)))
 
     # ------------------------------------------------------------------
