@@ -43,7 +43,7 @@ class Car:
 
         self.alive = True # Boolean To Check If Car is Crashed
 
-        self.distance = 0 # Distance Driven
+        self.distance = 0 
         self.time = 0 # Time Passed
 
     def draw(self, screen):
