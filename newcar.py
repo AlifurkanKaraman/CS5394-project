@@ -51,7 +51,6 @@ class Car:
         self.draw_radar(screen) #OPTIONAL FOR SENSORS
 
     def draw_radar(self, screen):
-        # Optionally Draw All Sensors / Radars
         for radar in self.radars:
             position = radar[0]
             pygame.draw.line(screen, (0, 255, 0), self.center, position, 1)
