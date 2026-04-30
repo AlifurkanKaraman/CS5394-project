@@ -156,11 +156,11 @@ class HudView:
             (f"Mode:       {mode_label}",          _CYAN),
             (f"Generation: {metrics.generation}",  _WHITE),
             (f"Cars:       {metrics.alive_count}/{metrics.total_spawned}", _WHITE),
-            (f"Best fit:   {metrics.best_fitness:.1f}", _YELLOW),
+            (f"Best fit:   {metrics.best_fitness:.2f}", _YELLOW),
         ]
 
         if metrics.avg_fitness is not None:
-            lines.append((f"Avg fit:    {metrics.avg_fitness:.1f}", _GRAY))
+            lines.append((f"Avg fit:    {metrics.avg_fitness:.2f}", _GRAY))
 
         if metrics.best_distance is not None:
             lines.append((f"Best dist:  {metrics.best_distance:.0f}px", _GRAY))
